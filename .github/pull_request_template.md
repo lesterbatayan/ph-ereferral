@@ -5,14 +5,17 @@ Brief description of the changes.
 Closes #
 
 ## Type of Work
-- [ ] Profile
-- [ ] ValueSet
+- [ ] CI/Build Infrastructure
 - [ ] ConceptMap
 - [ ] Example
 - [ ] Narrative Page
-- [ ] Test Script
 - [ ] PH-Core Dependency Change
-- [ ] CI/Build Infrastructure
+- [ ] Profile
+- [ ] Test Script
+- [ ] ValueSet
+- [ ] Extension
+- [ ] CodeSystem
+- [ ] Documentation
 - [ ] Other
 
 ## Changes Made
