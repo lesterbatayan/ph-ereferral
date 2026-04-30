@@ -1,5 +1,7 @@
 Alias: $sct = http://snomed.info/sct
 Alias: $loinc = http://loinc.org
+Alias: $icd11 = http://id.who.int/icd/release/11/mms
+Alias: $VaccineAdministeredCodeSet-CVX = http://hl7.org/fhir/sid/cvx
 Alias: $PhilHealthID = http://philhealth.gov.ph/fhir/Identifier/philhealth-id
 Alias: $PhilSysID = http://philsys.gov.ph/fhir/Identifier/philsys-id
 Alias: $PSA = https://psa.gov.ph/classification
@@ -18,3 +20,5 @@ Alias: $sht = https://icd.who.int/browse10/2019/en#
 Alias: $request-priority = http://hl7.org/fhir/request-priority
 Alias: $servicerequest-status-reason = http://hl7.org/fhir/service-request-status-reason
 Alias: $organization-type = http://terminology.hl7.org/CodeSystem/organization-type
+Alias: $provenance-participant-type = http://terminology.hl7.org/CodeSystem/provenance-participant-type
+Alias: $signature-type = urn:iso-astm:E1762-95:2013
