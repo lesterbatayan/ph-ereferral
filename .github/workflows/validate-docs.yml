@@ -85,39 +85,82 @@ jobs:
           name: ig-publisher-log
           path: output/fhir-ig-publisher-tmp.log
 
-      - name: Print QA errors
+      - name: Print QA error summary and details from qa.html
         if: always()
         run: |
-          if [ ! -f output/qa.json ]; then
-            echo "::error::output/qa.json not found"
+          if [ ! -f output/qa.html ]; then
+            echo "::warning::output/qa.html not found"
             exit 0
           fi
 
-          echo "QA errs=$(jq -r '.errs // 0' output/qa.json)"
-          echo "---- QA errors ----"
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          from html import unescape
 
-          jq -r '
-            [(.issues // [])[]
-            | select((.severity // "") == "error")
-            | "- " + (.location // "n/a") + ": " + (.message // "n/a")]
-            | if length == 0
-              then "No detailed error entries found in output/qa.json .issues[]"
-              else .[]
-              end
-          ' output/qa.json
+          html = Path("output/qa.html").read_text(encoding="utf-8", errors="ignore")
 
-      - name: QA Gate
-        run: |
-          if [ -f output/qa.json ]; then
-            ERRORS=$(jq -r '.errs // 0' output/qa.json)
-            if [ "$ERRORS" -gt 0 ]; then
-              echo "::error::QA errors found: $ERRORS"
-              exit 1
-            fi
-            echo "✅ QA passed: $ERRORS errors"
-          else
-            echo "::warning::No qa.json found"
-          fi
+          def clean(s):
+              s = re.sub(r"<.*?>", "", s, flags=re.S)
+              s = unescape(s)
+              return " ".join(s.split()).strip()
+
+          # 1) Extract rows from the summary table
+          rows = re.findall(r"<tr.*?>(.*?)</tr>", html, flags=re.S | re.I)
+          failing = []
+
+          for row in rows:
+              cols = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, flags=re.S | re.I)
+              cols = [clean(c) for c in cols]
+              if len(cols) >= 4:
+                  filename, errors, warnings, hints = cols[:4]
+                  if errors.isdigit() and int(errors) > 0 and filename != "Build Errors":
+                      failing.append((filename, int(errors), warnings, hints))
+
+          print("---- QA failing rows ----")
+          if not failing:
+              print("No failing rows found")
+          else:
+              for filename, errors, warnings, hints in failing:
+                  print(f"- {filename}: errors={errors}, warnings={warnings}, hints={hints}")
+
+          # 2) Try to find detailed error blocks related to each failing file/resource
+          print("---- QA detailed errors ----")
+          for filename, errors, warnings, hints in failing:
+              short = filename.split("/")[-1]
+              print(f"\n### {short}")
+
+              # Heuristic: find nearby sections mentioning the filename/resource
+              # and capture list items / paragraphs / table rows after it.
+              pattern = re.compile(
+                  rf"({re.escape(short)}.*?)(?=<h[1-6]\b|<hr\b|$)",
+                  flags=re.S | re.I
+              )
+              matches = pattern.findall(html)
+
+              printed = False
+              for block in matches[:3]:
+                  text = clean(block)
+                  if text and len(text) > len(short):
+                      print(text[:4000])
+                      printed = True
+                      break
+
+              if not printed:
+                  print("No detailed section found by heuristic parsing; inspect qa.html artifact.")
+          PY
+            - name: QA Gate
+              run: |
+                if [ -f output/qa.json ]; then
+                  ERRORS=$(jq -r '.errs // 0' output/qa.json)
+                  if [ "$ERRORS" -gt 0 ]; then
+                    echo "::error::QA errors found: $ERRORS"
+                    exit 1
+                  fi
+                  echo "✅ QA passed: $ERRORS errors"
+                else
+                  echo "::warning::No qa.json found"
+                fi
 
       - name: Deploy to GitHub Pages
         if: always() && github.event_name == 'push'
