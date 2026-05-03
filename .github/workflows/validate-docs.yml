@@ -70,7 +70,36 @@ jobs:
           path: |
             output/qa.json
             output/qa.html
-            /tmp/fhir-ig-publisher-tmp.log
+
+      - name: Copy publisher log into workspace
+        if: always()
+        run: |
+          if [ -f /tmp/fhir-ig-publisher-tmp.log ]; then
+            cp /tmp/fhir-ig-publisher-tmp.log output/fhir-ig-publisher-tmp.log
+          fi
+
+      - name: Upload publisher log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ig-publisher-log
+          path: output/fhir-ig-publisher-tmp.log
+
+      - name: Print QA errors (from qa.json)
+        if: always()
+        run: |
+          if [ ! -f output/qa.json ]; then
+            echo "::error::output/qa.json not found"
+            exit 0
+          fi
+          echo "QA errs=$(jq -r '.errs // 0' output/qa.json)"
+          echo "---- QA errors ----"
+          jq -r '
+            (.issues // [])
+            | map(select(.severity=="error"))
+            | .[]
+            | "- " + (.location // "n/a") + ": " + (.message // "n/a")
+          ' output/qa.json || true
 
       - name: QA Gate
         run: |
