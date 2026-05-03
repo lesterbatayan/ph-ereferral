@@ -85,21 +85,26 @@ jobs:
           name: ig-publisher-log
           path: output/fhir-ig-publisher-tmp.log
 
-      - name: Print QA errors (from qa.json)
+      - name: Print QA errors
         if: always()
         run: |
           if [ ! -f output/qa.json ]; then
             echo "::error::output/qa.json not found"
             exit 0
           fi
+
           echo "QA errs=$(jq -r '.errs // 0' output/qa.json)"
           echo "---- QA errors ----"
+
           jq -r '
-            (.issues // [])
-            | map(select(.severity=="error"))
-            | .[]
-            | "- " + (.location // "n/a") + ": " + (.message // "n/a")
-          ' output/qa.json || true
+            [(.issues // [])[]
+            | select((.severity // "") == "error")
+            | "- " + (.location // "n/a") + ": " + (.message // "n/a")]
+            | if length == 0
+              then "No detailed error entries found in output/qa.json .issues[]"
+              else .[]
+              end
+          ' output/qa.json
 
       - name: QA Gate
         run: |
