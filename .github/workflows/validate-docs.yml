@@ -145,6 +145,18 @@ jobs:
       #       echo "::warning::No qa.json found"
       #     fi
 
+      - name: QA Gate
+        run: |
+          if [ -f output/qa.json ]; then
+            ERRORS=$(jq -r '.errs // 0' output/qa.json)
+            if [ "$ERRORS" -gt 0 ]; then
+              echo "::error::QA errors found: $ERRORS"
+            fi
+            echo "✅ QA passed: $ERRORS errors"
+          else
+            echo "::warning::No qa.json found"
+          fi
+
       - name: Deploy to GitHub Pages
         if: always() && github.event_name == 'push'
         uses: peaceiris/actions-gh-pages@v4
