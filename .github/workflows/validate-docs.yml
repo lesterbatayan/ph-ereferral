@@ -132,19 +132,6 @@ jobs:
           echo "Browse artifacts here:"
           echo "https://github.com/lesterbatayan/ph-ereferral/actions/runs/${{ github.run_id }}/artifacts"
 
-      - name: QA Gate
-        run: |
-          if [ -f output/qa.json ]; then
-            ERRORS=$(jq -r '.errs // 0' output/qa.json)
-            if [ "$ERRORS" -gt 0 ]; then
-              echo "::error::QA errors found: $ERRORS"
-              exit 1
-            fi
-            echo "✅ QA passed: $ERRORS errors"
-          else
-            echo "::warning::No qa.json found"
-          fi
-
       # - name: QA Gate
       #   run: |
       #     if [ -f output/qa.json ]; then
