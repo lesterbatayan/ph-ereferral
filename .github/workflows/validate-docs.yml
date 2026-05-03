@@ -100,21 +100,26 @@ jobs:
 
           html = Path("output/qa.html").read_text(encoding="utf-8", errors="ignore")
 
-          def clean(s):
-              s = re.sub(r"<.*?>", "", s, flags=re.S)
-              s = unescape(s)
-              return " ".join(s.split()).strip()
+          def clean(text: str) -> str:
+              text = re.sub(r"<.*?>", "", text, flags=re.S)
+              text = unescape(text)
+              return " ".join(text.split()).strip()
 
-          # 1) Extract rows from the summary table
-          rows = re.findall(r"<tr.*?>(.*?)</tr>", html, flags=re.S | re.I)
+          def extract_table_rows(fragment: str):
+              rows = []
+              for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", fragment, flags=re.S | re.I):
+                  cols = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, flags=re.S | re.I)
+                  cols = [clean(c) for c in cols]
+                  if cols:
+                      rows.append(cols)
+              return rows
+
+          # 1) Extract failing rows from the summary table
           failing = []
-
-          for row in rows:
-              cols = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, flags=re.S | re.I)
-              cols = [clean(c) for c in cols]
+          for cols in extract_table_rows(html):
               if len(cols) >= 4:
                   filename, errors, warnings, hints = cols[:4]
-                  if errors.isdigit() and int(errors) > 0 and filename != "Build Errors":
+                  if filename != "Build Errors" and errors.isdigit() and int(errors) > 0:
                       failing.append((filename, int(errors), warnings, hints))
 
           print("---- QA failing rows ----")
@@ -124,43 +129,60 @@ jobs:
               for filename, errors, warnings, hints in failing:
                   print(f"- {filename}: errors={errors}, warnings={warnings}, hints={hints}")
 
-          # 2) Try to find detailed error blocks related to each failing file/resource
+          # 2) Extract actual validation messages for each failing resource
           print("---- QA detailed errors ----")
           for filename, errors, warnings, hints in failing:
               short = filename.split("/")[-1]
               print(f"\n### {short}")
 
-              # Heuristic: find nearby sections mentioning the filename/resource
-              # and capture list items / paragraphs / table rows after it.
-              pattern = re.compile(
-                  rf"({re.escape(short)}.*?)(?=<h[1-6]\b|<hr\b|$)",
-                  flags=re.S | re.I
+              section_match = re.search(
+                  rf'(<a[^>]*name="{re.escape(short)}(?:\.json)?".*?)(?=<a[^>]*name="|<h[1-6]\b|$)',
+                  html,
+                  flags=re.S | re.I,
               )
-              matches = pattern.findall(html)
 
-              printed = False
-              for block in matches[:3]:
-                  text = clean(block)
-                  if text and len(text) > len(short):
-                      print(text[:4000])
-                      printed = True
-                      break
+              if not section_match:
+                  section_match = re.search(
+                      rf'({re.escape(filename)}(?:\.json)?.*?)(?=<a[^>]*name="|<h[1-6]\b|$)',
+                      html,
+                      flags=re.S | re.I,
+                  )
 
-              if not printed:
-                  print("No detailed section found by heuristic parsing; inspect qa.html artifact.")
+              if not section_match:
+                  print("No detailed section found; inspect qa.html artifact.")
+                  continue
+
+              section = section_match.group(1)
+              rows = extract_table_rows(section)
+
+              details = []
+              for cols in rows:
+                  if len(cols) >= 4 and cols[0] != "Path":
+                      path, severity, message, validating = cols[:4]
+                      sev = severity.lower()
+                      if sev in {"error", "warning", "information"}:
+                          details.append((path, severity, message, validating))
+
+              if not details:
+                  print("No structured validation rows found; inspect qa.html artifact.")
+                  continue
+
+              for path, severity, message, validating in details:
+                  print(f"- [{severity}] {path}: {message} (Validating: {validating})")
           PY
-            - name: QA Gate
-              run: |
-                if [ -f output/qa.json ]; then
-                  ERRORS=$(jq -r '.errs // 0' output/qa.json)
-                  if [ "$ERRORS" -gt 0 ]; then
-                    echo "::error::QA errors found: $ERRORS"
-                    exit 1
-                  fi
-                  echo "✅ QA passed: $ERRORS errors"
-                else
-                  echo "::warning::No qa.json found"
-                fi
+
+      - name: QA Gate
+        run: |
+          if [ -f output/qa.json ]; then
+            ERRORS=$(jq -r '.errs // 0' output/qa.json)
+            if [ "$ERRORS" -gt 0 ]; then
+              echo "::error::QA errors found: $ERRORS"
+              exit 1
+            fi
+            echo "✅ QA passed: $ERRORS errors"
+          else
+            echo "::warning::No qa.json found"
+          fi
 
       - name: Deploy to GitHub Pages
         if: always() && github.event_name == 'push'
