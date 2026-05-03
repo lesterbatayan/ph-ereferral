@@ -114,7 +114,7 @@ jobs:
                       rows.append(cols)
               return rows
 
-          # 1) Extract failing rows from the summary table
+          # Summary table rows
           failing = []
           for cols in extract_table_rows(html):
               if len(cols) >= 4:
@@ -129,33 +129,45 @@ jobs:
               for filename, errors, warnings, hints in failing:
                   print(f"- {filename}: errors={errors}, warnings={warnings}, hints={hints}")
 
-          # 2) Extract actual validation messages for each failing resource
           print("---- QA detailed errors ----")
+
+          # Find all validation sections globally, then match them to failing resources
+          # This looks for blocks containing "Show Validation Information"
+          section_pattern = re.compile(
+              r'((?:<a[^>]*>.*?</a>|<h[1-6][^>]*>.*?</h[1-6]>|<p[^>]*>.*?</p>|<div[^>]*>.*?</div>|<table[^>]*>.*?</table>|.|\n)*?Show Validation Information.*?(?=(?:<a[^>]*>.*?</a>|<h[1-6][^>]*>.*?</h[1-6]>).*?(?:Show Validation Information)|$))',
+              flags=re.S | re.I,
+          )
+          candidate_sections = section_pattern.findall(html)
+
           for filename, errors, warnings, hints in failing:
               short = filename.split("/")[-1]
+              short_json = short + ".json"
               print(f"\n### {short}")
 
-              section_match = re.search(
-                  rf'(<a[^>]*name="{re.escape(short)}(?:\.json)?".*?)(?=<a[^>]*name="|<h[1-6]\b|$)',
-                  html,
-                  flags=re.S | re.I,
-              )
+              matched_section = None
+              for section in candidate_sections:
+                  flat = clean(section)
+                  if short in flat or short_json in flat or filename in flat:
+                      matched_section = section
+                      break
 
-              if not section_match:
-                  section_match = re.search(
-                      rf'({re.escape(filename)}(?:\.json)?.*?)(?=<a[^>]*name="|<h[1-6]\b|$)',
-                      html,
-                      flags=re.S | re.I,
-                  )
+              if not matched_section:
+                  # fallback: take a local window around the filename text
+                  idx = html.find(short)
+                  if idx == -1:
+                      idx = html.find(filename)
+                  if idx != -1:
+                      start = max(0, idx - 2000)
+                      end = min(len(html), idx + 12000)
+                      matched_section = html[start:end]
 
-              if not section_match:
+              if not matched_section:
                   print("No detailed section found; inspect qa.html artifact.")
                   continue
 
-              section = section_match.group(1)
-              rows = extract_table_rows(section)
-
+              rows = extract_table_rows(matched_section)
               details = []
+
               for cols in rows:
                   if len(cols) >= 4 and cols[0] != "Path":
                       path, severity, message, validating = cols[:4]
