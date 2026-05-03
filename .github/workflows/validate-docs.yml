@@ -62,6 +62,16 @@ jobs:
           chmod +x ./_genonce.sh
           ./_genonce.sh
 
+      - name: Upload QA artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ig-qa
+          path: |
+            output/qa.json
+            output/qa.html
+            /tmp/fhir-ig-publisher-tmp.log
+
       - name: QA Gate
         run: |
           if [ -f output/qa.json ]; then
