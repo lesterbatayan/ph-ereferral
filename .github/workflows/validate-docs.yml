@@ -85,7 +85,7 @@ jobs:
           name: ig-publisher-log
           path: output/fhir-ig-publisher-tmp.log
 
-      - name: Print QA error summary and details from qa.html
+      - name: Print QA error summary
         if: always()
         run: |
           if [ ! -f output/qa.html ]; then
@@ -105,18 +105,10 @@ jobs:
               text = unescape(text)
               return " ".join(text.split()).strip()
 
-          def extract_table_rows(fragment: str):
-              rows = []
-              for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", fragment, flags=re.S | re.I):
-                  cols = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, flags=re.S | re.I)
-                  cols = [clean(c) for c in cols]
-                  if cols:
-                      rows.append(cols)
-              return rows
-
-          # Summary table rows
           failing = []
-          for cols in extract_table_rows(html):
+          for row in re.findall(r"<tr.*?>(.*?)</tr>", html, flags=re.S | re.I):
+              cols = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, flags=re.S | re.I)
+              cols = [clean(c) for c in cols]
               if len(cols) >= 4:
                   filename, errors, warnings, hints = cols[:4]
                   if filename != "Build Errors" and errors.isdigit() and int(errors) > 0:
@@ -128,60 +120,30 @@ jobs:
           else:
               for filename, errors, warnings, hints in failing:
                   print(f"- {filename}: errors={errors}, warnings={warnings}, hints={hints}")
-
-          print("---- QA detailed errors ----")
-
-          # Find all validation sections globally, then match them to failing resources
-          # This looks for blocks containing "Show Validation Information"
-          section_pattern = re.compile(
-              r'((?:<a[^>]*>.*?</a>|<h[1-6][^>]*>.*?</h[1-6]>|<p[^>]*>.*?</p>|<div[^>]*>.*?</div>|<table[^>]*>.*?</table>|.|\n)*?Show Validation Information.*?(?=(?:<a[^>]*>.*?</a>|<h[1-6][^>]*>.*?</h[1-6]>).*?(?:Show Validation Information)|$))',
-              flags=re.S | re.I,
-          )
-          candidate_sections = section_pattern.findall(html)
-
-          for filename, errors, warnings, hints in failing:
-              short = filename.split("/")[-1]
-              short_json = short + ".json"
-              print(f"\n### {short}")
-
-              matched_section = None
-              for section in candidate_sections:
-                  flat = clean(section)
-                  if short in flat or short_json in flat or filename in flat:
-                      matched_section = section
-                      break
-
-              if not matched_section:
-                  # fallback: take a local window around the filename text
-                  idx = html.find(short)
-                  if idx == -1:
-                      idx = html.find(filename)
-                  if idx != -1:
-                      start = max(0, idx - 2000)
-                      end = min(len(html), idx + 12000)
-                      matched_section = html[start:end]
-
-              if not matched_section:
-                  print("No detailed section found; inspect qa.html artifact.")
-                  continue
-
-              rows = extract_table_rows(matched_section)
-              details = []
-
-              for cols in rows:
-                  if len(cols) >= 4 and cols[0] != "Path":
-                      path, severity, message, validating = cols[:4]
-                      sev = severity.lower()
-                      if sev in {"error", "warning", "information"}:
-                          details.append((path, severity, message, validating))
-
-              if not details:
-                  print("No structured validation rows found; inspect qa.html artifact.")
-                  continue
-
-              for path, severity, message, validating in details:
-                  print(f"- [{severity}] {path}: {message} (Validating: {validating})")
           PY
+
+      - name: Print QA artifact link
+        if: always()
+        run: |
+          echo "QA artifacts uploaded:"
+          echo "- ig-qa"
+          echo "- ig-publisher-log"
+          echo ""
+          echo "Browse artifacts here:"
+          echo "https://github.com/lesterbatayan/ph-ereferral/actions/runs/${{ github.run_id }}/artifacts"
+
+      - name: QA Gate
+        run: |
+          if [ -f output/qa.json ]; then
+            ERRORS=$(jq -r '.errs // 0' output/qa.json)
+            if [ "$ERRORS" -gt 0 ]; then
+              echo "::error::QA errors found: $ERRORS"
+              exit 1
+            fi
+            echo "✅ QA passed: $ERRORS errors"
+          else
+            echo "::warning::No qa.json found"
+          fi
 
       - name: QA Gate
         run: |
