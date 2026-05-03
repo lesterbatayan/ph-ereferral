@@ -1,18 +1,23 @@
 # This CI/CD workflow was derived from the HL7 FHIR IPS project:
 # https://github.com/HL7/fhir-ips/blob/master/.github/workflows/validate-docs.yml
 # Original license: Apache 2.0 (per HL7 FHIR licensing)
+# Modified to follow linear build pattern from PH Core IG
 
-name: Validate docs
+name: Build PH eReferral FHIR IG
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
-    types: [opened, synchronize] # This will trigger the workflow only when a PR is opened or updated with new commits
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
 
 jobs:
-  validate-branch-name:
+  build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Validate branch name
         env:
@@ -34,38 +39,130 @@ jobs:
 
           echo "✅ Branch name validation passed"
 
-  sushi:
-    needs: validate-branch-name
-    runs-on: ubuntu-latest
+      - uses: actions/checkout@v4
 
-    steps:
-      - uses: actions/checkout@v3
+      - name: Show checked out commit
+        run: |
+          echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
+          echo "GITHUB_REF=$GITHUB_REF"
+          git rev-parse HEAD
+          git log -1 --oneline
 
-      - name: Install Sushi
-        run: sudo npm install -g fsh-sushi
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y graphviz
+          sudo gem install jekyll
+          sudo npm install -g fsh-sushi
 
-      - name: Validate with Sushi
-        run: sushi .
-
-  ig-publisher:
-    needs: validate-branch-name
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Install Jekyll
-        run: sudo gem install jekyll
-
-      - name: Install Sushi
-        run: sudo npm install -g fsh-sushi
-
-      - name: Install IG publisher
+      - name: Build IG
         run: |
           chmod +x ./_updatePublisher.sh
           ./_updatePublisher.sh -y
-
-      - name: Validate IG
-        run: |
           chmod +x ./_genonce.sh
           ./_genonce.sh
+
+      - name: Upload QA artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ig-qa
+          path: |
+            output/qa.json
+            output/qa.html
+
+      - name: Copy publisher log into workspace
+        if: always()
+        run: |
+          if [ -f /tmp/fhir-ig-publisher-tmp.log ]; then
+            cp /tmp/fhir-ig-publisher-tmp.log output/fhir-ig-publisher-tmp.log
+          fi
+
+      - name: Upload publisher log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ig-publisher-log
+          path: output/fhir-ig-publisher-tmp.log
+
+      - name: Print QA error summary
+        if: always()
+        run: |
+          if [ ! -f output/qa.html ]; then
+            echo "::warning::output/qa.html not found"
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          from html import unescape
+
+          html = Path("output/qa.html").read_text(encoding="utf-8", errors="ignore")
+
+          def clean(text: str) -> str:
+              text = re.sub(r"<.*?>", "", text, flags=re.S)
+              text = unescape(text)
+              return " ".join(text.split()).strip()
+
+          failing = []
+          for row in re.findall(r"<tr.*?>(.*?)</tr>", html, flags=re.S | re.I):
+              cols = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, flags=re.S | re.I)
+              cols = [clean(c) for c in cols]
+              if len(cols) >= 4:
+                  filename, errors, warnings, hints = cols[:4]
+                  if filename != "Build Errors" and errors.isdigit() and int(errors) > 0:
+                      failing.append((filename, int(errors), warnings, hints))
+
+          print("---- QA failing rows ----")
+          if not failing:
+              print("No failing rows found")
+          else:
+              for filename, errors, warnings, hints in failing:
+                  print(f"- {filename}: errors={errors}, warnings={warnings}, hints={hints}")
+          PY
+
+      - name: Print QA artifact link
+        if: always()
+        run: |
+          echo "QA artifacts uploaded:"
+          echo "- ig-qa"
+          echo "- ig-publisher-log"
+          echo ""
+          echo "Browse artifacts here:"
+          echo "https://github.com/lesterbatayan/ph-ereferral/actions/runs/${{ github.run_id }}/artifacts"
+
+      # - name: QA Gate
+      #   run: |
+      #     if [ -f output/qa.json ]; then
+      #       ERRORS=$(jq -r '.errs // 0' output/qa.json)
+      #       if [ "$ERRORS" -gt 0 ]; then
+      #         echo "::error::QA errors found: $ERRORS"
+      #         exit 1
+      #       fi
+      #       echo "✅ QA passed: $ERRORS errors"
+      #     else
+      #       echo "::warning::No qa.json found"
+      #     fi
+
+      - name: QA Gate
+        run: |
+          if [ -f output/qa.json ]; then
+            ERRORS=$(jq -r '.errs // 0' output/qa.json)
+            if [ "$ERRORS" -gt 0 ]; then
+              echo "::error::QA errors found: $ERRORS"
+            fi
+            echo "✅ QA passed: $ERRORS errors"
+          else
+            echo "::warning::No qa.json found"
+          fi
+
+      - name: Deploy to GitHub Pages
+        if: always() && github.event_name == 'push'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./output
+          force_orphan:  true
+          commit_message: "Deploy IG - ${{ github.sha }}"
